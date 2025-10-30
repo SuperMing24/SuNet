@@ -1,0 +1,120 @@
+我做了一个用来打印模型执行过程的工具，代码如下：
+def trace_model(model: nn.Module, model_name: str = '', deep: int = 0):
+    wrap_forward_with_trace(model, model_name, deep)
+    for name, child in get_direct_submodules(model):
+        full_name = f"{model_name}.{name}" if model_name else name
+        wrap_forward_with_trace(child, full_name, deep + 1)
+        trace_model(child, full_name, deep + 1)
+
+
+def un_trace_model(model: nn.Module):
+    forward = getattr(model, 'original_forward', None)
+    if forward:
+        model.forward = forward
+        model.original_forward = None
+    for _, child in get_direct_submodules(model):
+        un_trace_model(child)
+
+
+def wrap_forward_with_trace(module: nn.Module, model_name: str = "", deep: int = 0):
+    if getattr(module, 'original_forward', None):
+        return
+
+    original_forward = module.forward
+    leaf = len(get_direct_submodules(module)) == 0
+    prefix = '\t' * deep
+    type_name = module.__class__.__name__
+    model_name = type_name + ':' + model_name if model_name else type_name
+    if leaf:
+        def wrapped_forward(*args, **kwargs):
+            input = args[-1]
+            msg = f'[{model_name}]:{list(input.shape)}====>'
+            output = original_forward(*args, **kwargs)
+            print(prefix + msg + f"{list(output.shape)}")
+            return output
+
+        module.forward = wrapped_forward
+    else:
+        def wrapped_forward(*args, **kwargs):
+            input = args[-1]
+            print(prefix + f'[{model_name}]:{list(input.shape)}====>')
+            output = original_forward(*args, **kwargs)
+            print(prefix + f'[{model_name}]:====>{list(output.shape)}')
+            return output
+
+        module.forward = wrapped_forward
+    module.original_forward = original_forward
+
+def get_direct_submodules(module: nn.Module) -> List[Tuple[str, nn.Module]]:
+    visited: Set[int] = set()  # 用于去重，记录模块 id
+    result: List[Tuple[str, nn.Module]] = []
+
+    for attr_name in dir(module):
+        if attr_name.startswith('_'):
+            continue  # 忽略私有属性
+
+        attribute = getattr(module, attr_name)
+
+        # 情况1：单个模块
+        if isinstance(attribute, nn.Module):
+            if id(attribute) not in visited:
+                visited.add(id(attribute))
+                result.append((attr_name, attribute))
+
+        # 情况2：容器类型 list / tuple / ModuleList
+        elif isinstance(attribute, (list, tuple, nn.ModuleList)):
+            for idx, item in enumerate(attribute):
+                if isinstance(item, nn.Module) and id(item) not in visited:
+                    visited.add(id(item))
+                    result.append((f"{attr_name}.{idx}", item))
+
+        # 情况3：字典或 ModuleDict
+        elif isinstance(attribute, (dict, nn.ModuleDict)):
+            for key, item in attribute.items():
+                if isinstance(item, nn.Module) and id(item) not in visited:
+                    visited.add(id(item))
+                    result.append((f"{attr_name}.{key}", item))
+
+    return result
+
+
+def exec_with_detail(model, X):
+    trace_model(model)
+    Y = model(X)
+    un_trace_model(model)
+    return Y
+
+
+class ForwardTracer:
+    def __init__(self, model):
+        self.model = model
+
+    def __enter__(self):
+        trace_model(self.model)
+        return self.model
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        un_trace_model(self.model)
+        return False
+
+现在我想重构一下这个工具，扩展一下它的功能，用来做辅助调试。
+我的想法是这样的：
+1.之前我分散在多个地方去处理模型的位置深度名字等信息，这样非常不好，我需要从模型定义中直接抓取一棵完整的模型树出来：
+  每个节点是对相应位置模型的描述，包括模型自身，以及深度和它在模型树中的位置信息，以及名字信息，名字信息用它的所有父节点串起来并且最后一段要包含模型自身的关键信息。
+  当然，你还可以帮我考虑一下还可以加入什么信息。
+2.这样，新的wrap_forward_with_trace方法就可以对模型树中的每个节点进行包装处理，就可以了，不需要自己再处理递归。
+  当然，现在这个方法不应该叫wrap_forward_with_trace了，而是应该改为wrap_forward_with_message?（可以帮我取个更好的名字），它的参数应该是包含模型节点以及回调接口。
+  即wrap_forward_with_xxx(modeldes,caller)
+  caller接口应该如下：
+    caller:
+      def before(modeldes, input)
+      def after(modeldes, input,output)
+
+3.然后你需要写一个遍历这棵树去调用wrap_forward_with_xxx的方法：wrap_forward(modeltree, caller)
+和一个更直接的方法wrap_forward(model, caller)，
+方法名可以给我取的更合理一些
+
+4.同样的，也需要相应的unwrap方法。
+
+请你理解我的需求，然后帮我重构这些代码。
+请注意正确抓取模型树（是不是要避免死循环，参考之前的代码）。

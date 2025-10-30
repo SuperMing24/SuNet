@@ -1,0 +1,100 @@
+import glob
+import os
+import sys
+import nibabel as nib
+import numpy as np
+from datetime import datetime
+
+import torch
+from torchvision import transforms
+
+from fc_dn_tools import Cat25Dataset
+from fcdensenet.fc_dn_model import FCDenseNet
+from utils import command
+from utils import trainer
+from utils.segutil import get_data_iter
+from utils.forward_hook import ForwardHookCaller, ModuleNode, Tuple, Any
+
+from utils.losses import LOSS_REGISTRY
+from utils.metrics import create_metrics
+from utils.logger import SegLogger, SimpleConsoleLogger
+
+
+class MyHookCaller(ForwardHookCaller):
+    """打印执行过程的钩子调用器"""
+
+    def before_forward(self, node: ModuleNode, inputs: Tuple[Any, ...]) -> None:
+        if node.is_leaf:
+            if 'conv' in node.local_name:
+                X = inputs[0]
+                print('before ' + node.full_path,
+                      X[0, 0, X.shape[2] // 2:X.shape[2] // 2 + 5, X.shape[3] // 2:X.shape[3] // 2 + 5])
+
+    def after_forward(self, node: ModuleNode, inputs: Tuple[Any, ...], outputs: Any) -> None:
+        X = outputs[0]
+        print('after ' + node.name, X[0, 0, X.shape[2] // 2:X.shape[2] // 2 + 5, X.shape[3] // 2:X.shape[3] // 2 + 5])
+
+
+if __name__ == '__main__':
+    model = FCDenseNet(3, 48, [4, 5, 7, 10, 12, 15], growth_rate=16)
+    # model = FCDenseNet(3, 48, [2, 2, 2, 2, 2, 2], growth_rate=16)
+    X = torch.randn(1, 3, 256, 256)
+
+    # forward_hook.show_model_structure(model, True)
+    # with forward_hook.Forward_Hook(model, MyHookCaller()):
+    #     model(X)
+    # input('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx程序已暂停，请按Enter键继续xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    # with Tracer():
+    #     result = model.forward(X)
+    # sys.exit(0)
+
+    base_dir = 'E:/Surora/Azure_work/AI'
+    data_dir = os.path.join(base_dir, 'datasets/fcdnet')
+    model_dir = os.path.join(base_dir, 'model/fcdnet')
+    log_dir = os.path.join(base_dir, 'work/fcdnet')
+
+    # tf = [transforms.ToTensor(), (transforms.RandomCrop(size=256), True)]
+    tf = [transforms.ToTensor()]
+    batch_size, lr, epoch = 1, 1e-4, 500
+    train_size = 0.9
+    device = torch.device('cuda:0')
+    logger = SegLogger(log_dir, total_epochs=epoch, log_interval=10)
+
+    # train_itr, val_itr = get_data_iter(data_dir + '/train', tf, train_size=0.8, batch_size=batch_size,
+    #                                    dataset_class=Cat25Dataset)
+    # train_itr, val_itr = get_data_iter(data_dir, tf, train_size=0.8, batch_size=batch_size, dataset_class=Cat25Dataset)
+    train_loader = get_data_iter(data_dir + '/train', tf, train_size=None, batch_size=batch_size,
+                              dataset_class=Cat25Dataset)
+    val_loader = get_data_iter(data_dir + '/val', tf, train_size=None, batch_size=batch_size, dataset_class=Cat25Dataset)
+
+
+
+    # 配置训练
+    config = {
+        'model': model,
+        'epochs': epoch,
+        'lr': lr,
+        'device': device,
+
+        # 损失函数 - 血管分割专用
+        'loss_fn': LOSS_REGISTRY['cl_dice'],
+
+        # 评估指标 - 简洁配置
+        'metric_evaluator': create_metrics(['dice', 'cldice', 'hausdourff']),
+
+        # 日志记录器
+        'loggers': [logger],
+
+        # 数据
+        'train_loader': train_loader,
+        'val_loader': val_loader,
+
+        # 其他配置
+        'model_dir': model_dir,
+        'checkpoint': 'best_model.pth'  # 可选：恢复训练
+    }
+
+    trainer = trainer.Trainer(config)
+    # command.CmdProcessor(trainer).start_async()
+    command.CommandServer(trainer).start()
+    trainer.start_train()
