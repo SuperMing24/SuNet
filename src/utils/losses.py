@@ -43,7 +43,6 @@ def cl_dice_loss(pred, target, smooth=1e-6):
     return 1 - tprec
 
 
-
 def _extract_centerline(tensor):
     """可微的中心线提取 - 使用迭代腐蚀膨胀"""
     # 简化的可微中心线近似
@@ -75,45 +74,3 @@ LOSS_REGISTRY = {
     'cl_dice': cl_dice_loss,
     'focal': vascular_focal_loss
 }
-
-
-# def dice_loss(y_pred, y_true, smooth=1.):
-#     y_pred = y_pred.contiguous()
-#     y_true = y_true.contiguous()
-#     intersection = (y_pred * y_true).sum(dim=2).sum(dim=2)
-#     loss = 1 - ((2. * intersection + smooth) /
-#                 (y_pred.sum(dim=2).sum(dim=2) + y_true.sum(dim=2).sum(dim=2) + smooth))
-#     return loss.mean()
-#
-#
-# def bce_dice_loss(y_pred, y_true):
-#     bce = F.binary_cross_entropy_with_logits(y_pred, y_true)
-#     dice = dice_loss(torch.sigmoid(y_pred), y_true)
-#     return bce + dice
-#
-#
-# def multi_class_dice_loss(pred, target, smooth=1e-5):
-#     """多分类Dice损失函数实现"""
-#     pred = F.softmax(pred, dim=1)
-#     target_onehot = F.one_hot(target, num_classes=pred.shape[1]).permute(0, 3, 1, 2)
-#
-#     intersection = (pred * target_onehot).sum(dim=(2, 3))
-#     union = pred.sum(dim=(2, 3)) + target_onehot.sum(dim=(2, 3))
-#     dice = (2. * intersection + smooth) / (union + smooth)
-#     return 1 - dice.mean()
-#
-#
-# def focal_loss(pred, target, alpha=0.25, gamma=2.0):
-#     """多分类Focal Loss实现"""
-#     ce_loss = F.cross_entropy(pred, target, reduction='none')
-#     pt = torch.exp(-ce_loss)
-#     focal_loss = (alpha * (1 - pt) ** gamma * ce_loss).mean()
-#     return focal_loss
-#
-#
-# def combined_loss(pred, target, weights=(0.5, 0.3, 0.2)):
-#     """组合损失函数：交叉熵 + Dice + Focal"""
-#     ce = F.cross_entropy(pred, target)
-#     dice = multi_class_dice_loss(pred, target)
-#     focal = focal_loss(pred, target)
-#     return weights[0] * ce + weights[1] * dice + weights[2] * focal

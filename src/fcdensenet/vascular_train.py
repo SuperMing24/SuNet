@@ -55,39 +55,37 @@ if __name__ == '__main__':
 
     # tf = [transforms.ToTensor(), (transforms.RandomCrop(size=256), True)]
     tf = [transforms.ToTensor()]
-    batch_size, lr, epoch = 1, 1e-4, 500
-    train_size = 0.9
-    device = torch.device('cuda:0')
-    logger = SegLogger(log_dir, total_epochs=epoch, log_interval=10)
+    batch_size = 1
 
     # train_itr, val_itr = get_data_iter(data_dir + '/train', tf, train_size=0.8, batch_size=batch_size,
     #                                    dataset_class=Cat25Dataset)
-    # train_itr, val_itr = get_data_iter(data_dir, tf, train_size=0.8, batch_size=batch_size, dataset_class=Cat25Dataset)
     train_loader = get_data_iter(data_dir + '/train', tf, train_size=None, batch_size=batch_size,
                               dataset_class=Cat25Dataset)
     val_loader = get_data_iter(data_dir + '/val', tf, train_size=None, batch_size=batch_size, dataset_class=Cat25Dataset)
 
 
-
     # 配置训练
     config = {
         'model': model,
-        'epochs': epoch,
-        'lr': lr,
-        'device': device,
-
-        # 损失函数 - 血管分割专用
-        'loss_fn': LOSS_REGISTRY['cl_dice'],
-
-        # 评估指标 - 简洁配置
-        'metric_evaluator': create_metrics(['dice', 'cldice', 'hausdourff']),
-
-        # 日志记录器
-        'loggers': [logger],
+        'epochs': 500,
+        'lr': 1e-4,
+        'device': torch.device('cuda:0'),
 
         # 数据
         'train_loader': train_loader,
         'val_loader': val_loader,
+
+        # 损失函数 - 血管分割专用
+        'loss_fn': LOSS_REGISTRY['cl_dice'],
+        # 评估指标 - 简洁配置
+        'metric_evaluator': create_metrics(['dice', 'cl_dice', 'hausdorff']),
+
+        # 监控配置
+        'monitor_metric': 'cl_dice',  # 主要看中心线匹配度
+        'monitor_mode': 'max',       # cl_dice越大越好
+
+        # 日志记录器
+        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=10)],
 
         # 其他配置
         'model_dir': model_dir,

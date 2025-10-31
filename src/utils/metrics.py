@@ -72,11 +72,9 @@ class CLDiceScore(BaseMetric):
 
 class HausdorffDistance(BaseMetric):
     """Hausdorff距离 - 边界匹配精度"""
-
     @property
     def name(self) -> str:
         return "hausdorff"
-
     def compute(self, output: torch.Tensor, target: torch.Tensor) -> float:
         pred = (torch.sigmoid(output) > 0.5).cpu().numpy()
         true = target.cpu().numpy()
@@ -133,7 +131,7 @@ def create_metrics(metric_names: List[str]) -> MetricEvaluator:
     """创建指标评估器 - 简洁的配置方式"""
     metric_classes = {
         'dice': DiceScore,
-        'cldice': CLDiceScore,
+        'cl_dice': CLDiceScore,
         'hausdorff': HausdorffDistance,
         'accuracy': AccuracyScore
     }

@@ -236,17 +236,3 @@ def plot_multi_results(image, true_mask, pred_mask, class_colors, save_path, siz
     plt.savefig(save_path)
     plt.close()
 
-
-def save_model(model, optimizer, epoch, path):
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }, path)
-
-
-def load_model(model, optimizer, path):
-    checkpoint = torch.load(path)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    return checkpoint['epoch']
