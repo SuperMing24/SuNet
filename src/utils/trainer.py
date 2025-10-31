@@ -94,7 +94,7 @@ class Trainer:
         if 'checkpoint' in config:
             self._load_checkpoint(config['checkpoint'])
 
-        self.trainning = False
+        self.training = False
 
     def _log(self, method_name: str, *args, **kwargs):
         """统一的日志记录方法"""
@@ -102,7 +102,14 @@ class Trainer:
             if hasattr(logger, method_name):
                 log_method = getattr(logger, method_name)
                 try:
+                    # 同时传递位置参数和关键字参数
                     log_method(*args, **kwargs)
+                except TypeError as e:
+                    # 如果参数不匹配，尝试只传递位置参数
+                    try:
+                        log_method(*args)
+                    except Exception as e2:
+                        print(f"日志记录错误 ({method_name}): {e2}")
                 except Exception as e:
                     print(f"日志记录错误 ({method_name}): {e}")
 
@@ -115,10 +122,9 @@ class Trainer:
             print(f"从epoch {state['epoch']}恢复训练")
 
     def _train_epoch(self) -> float:
-        """训练阶段 - 只计算损失"""
+        """训练阶段 - 使用灵活的kwargs参数"""
         self.model.train()
         total_loss = 0.0
-        loss_fn = self.config['loss_fn']
 
         for batch_idx, (data, target) in enumerate(self.train_loader):
             start_time = time.time()
@@ -126,22 +132,26 @@ class Trainer:
 
             self.optimizer.zero_grad()
             output = self.model(data)
-            loss = loss_fn(output, target)
+            loss = self.loss_fn(output, target)
             loss.backward()
+
+            # 计算梯度范数（用于监控）
+            total_norm = self._compute_gradient_norm()
+
             self.optimizer.step()
 
             total_loss += loss.item()
             use_time = time.time() - start_time
 
-            # 记录时间
-            self._log('log_time', f"训练batch {batch_idx} 耗时: {use_time:.2f}s")
-
-            # 记录损失
-            self._log('log_loss', 'train', self.current_epoch, batch_idx, loss.item())
-
-            if not self.trainning:
+            # 增加kwargs传递信息
+            self._log('log_loss', 'train', self.current_epoch, batch_idx,
+                     loss.item(),
+                     耗时=f"{use_time:.2f}s",
+                     学习率=f"{self.optimizer.param_groups[0]['lr']:.2e}",
+                     梯度范数=f"{total_norm:.4f}",
+                     设备=str(self.device))
+            if not self.training:
                 break
-
         return total_loss / len(self.train_loader)
 
     def _validate(self) -> Dict[str, float]:
@@ -160,14 +170,14 @@ class Trainer:
                 all_outputs.append(output.cpu())
                 all_targets.append(target.cpu())
 
-                # 记录验证损失（可选）
+                # 记录验证损失和耗时等信息
                 val_loss = self.loss_fn(output, target).item()
-                self._log('log_loss', 'val', self.current_epoch, batch_idx, val_loss)
                 total_val_loss += val_loss
-
-                # 记录时间
                 use_time = time.time() - start_time
-                self._log('log_time', f"验证batch {batch_idx} 耗时: {use_time:.2f}s")
+                self._log('log_loss', 'val', self.current_epoch, batch_idx,
+                         val_loss,
+                         耗时=f"{use_time:.2f}s",
+                         批次大小=f"{data.size(0)}")
 
         # 计算平均验证损失
         avg_val_loss = total_val_loss / len(self.val_loader)
@@ -176,17 +186,28 @@ class Trainer:
         combined_output = torch.cat(all_outputs, dim=0)
         combined_target = torch.cat(all_targets, dim=0)
 
-        val_metrics = {}
+        eval_metrics = {}
         if self.metric_evaluator:
-            val_metrics = self.metric_evaluator.evaluate(combined_output, combined_target)
+            eval_metrics = self.metric_evaluator.evaluate(combined_output, combined_target)
             # 记录评估指标
-            self._log('log_metrics', self.current_epoch, val_metrics)
+            self._log('log_metrics', self.current_epoch, eval_metrics,
+                 验证样本数=f"{combined_output.size(0)}",
+                 最佳指标=f"{self.best_metric:.4f}")
 
         # 返回验证损失和所有指标
-        val_metrics['val_loss'] = avg_val_loss
-        return val_metrics
+        eval_metrics['val_loss'] = avg_val_loss
+        return eval_metrics
 
-    def _should_save_model(self, current_metric: float, val_metrics: Dict[str, float]) -> bool:
+    def _compute_gradient_norm(self) -> float:
+        """计算梯度L2范数"""
+        total_norm = 0.0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)  # L2范数
+                total_norm += param_norm.item() ** 2
+        return total_norm ** 0.5
+
+    def _should_save_model(self, current_metric: float, eval_metrics: Dict[str, float]) -> bool:
         """判断是否应该保存模型 - 健壮的模型选择逻辑"""
         is_improvement = False
 
@@ -196,31 +217,31 @@ class Trainer:
             is_improvement = True
 
         # 额外的质量检查（可选）
-        if is_improvement and self._passes_quality_checks(val_metrics):
+        if is_improvement and self._passes_quality_checks(eval_metrics):
             return True
 
         return is_improvement
 
-    def _passes_quality_checks(self, val_metrics: Dict[str, float]) -> bool:
+    def _passes_quality_checks(self, eval_metrics: Dict[str, float]) -> bool:
         """质量检查 - 确保模型达到基本质量标准"""
         # 示例检查：如果监控指标是dice，确保至少达到0.3
-        if self.monitor_metric == 'dice' and val_metrics.get('dice', 0) < 0.3:
-            self._log('log_time', f"Dice系数 {val_metrics['dice']:.4f} 过低，跳过保存")
+        if self.monitor_metric == 'dice' and eval_metrics.get('dice', 0) < 0.3:
+            self._log('log_time', f"Dice系数 {eval_metrics['dice']:.4f} 过低，跳过保存")
             return False
 
         # 示例检查：如果监控指标是hausdorff，确保不是无穷大
-        if self.monitor_metric == 'hausdorff' and val_metrics.get('hausdorff', float('inf')) == float('inf'):
+        if self.monitor_metric == 'hausdorff' and eval_metrics.get('hausdorff', float('inf')) == float('inf'):
             self._log('log_time', "Hausdorff距离为无穷大，跳过保存")
             return False
 
         # 示例检查：验证损失不能是NaN
-        if math.isnan(val_metrics.get('val_loss', 0)):
+        if math.isnan(eval_metrics.get('val_loss', 0)):
             self._log('log_time', "验证损失为NaN，跳过保存")
             return False
 
         return True
 
-    def _save_best_model(self, epoch: int, current_metric: float, val_metrics: Dict[str, float]):
+    def _save_best_model(self, epoch: int, current_metric: float, eval_metrics: Dict[str, float]):
         """保存最佳模型 - 统一的最佳模型保存逻辑"""
         self.best_metric = current_metric
         self.early_stop_counter = 0
@@ -230,14 +251,14 @@ class Trainer:
             self.model, self.optimizer, epoch,
             'best_model.pth',
             best_metric=self.best_metric,
-            val_metrics=val_metrics,
+            eval_metrics=eval_metrics,
             monitor_metric=self.monitor_metric
         )
 
         # 记录保存信息
         metric_info = f"{self.monitor_metric}: {current_metric:.4f}"
         if self.monitor_metric != 'val_loss':
-            metric_info += f" | val_loss: {val_metrics.get('val_loss', 0):.4f}"
+            metric_info += f" | val_loss: {eval_metrics.get('val_loss', 0):.4f}"
 
         self._log('log_time', f"💾 保存最佳模型 ({metric_info})")
 
@@ -249,9 +270,9 @@ class Trainer:
             return True
         return False
 
-    def _update_learning_rate(self, val_metrics: Dict[str, float]):
+    def _update_learning_rate(self, eval_metrics: Dict[str, float]):
         """更新学习率 - 使用验证损失"""
-        val_loss = val_metrics.get('val_loss', 0)
+        val_loss = eval_metrics.get('val_loss', 0)
         if not math.isnan(val_loss) and val_loss != float('inf'):
             self.scheduler.step(val_loss)
 
@@ -259,16 +280,16 @@ class Trainer:
             current_lr = self.optimizer.param_groups[0]['lr']
             self._log('log_time', f"📉 学习率更新为: {current_lr:.2e}")
 
-    def _evaluate_training_progress(self, epoch: int, train_loss: float, val_metrics: Dict[str, float]) -> Dict[str, Any]:
+    def _evaluate_training_progress(self, epoch: int, train_loss: float, eval_metrics: Dict[str, float]) -> Dict[str, Any]:
         """评估训练进度 - 返回训练状态信息"""
-        current_metric = val_metrics.get(self.monitor_metric, val_metrics.get('val_loss', 0))
+        current_metric = eval_metrics.get(self.monitor_metric, eval_metrics.get('val_loss', 0))
 
         progress_info = {
             'epoch': epoch,
             'train_loss': train_loss,
             'current_metric': current_metric,
-            'val_metrics': val_metrics,
-            'should_save': self._should_save_model(current_metric, val_metrics),
+            'eval_metrics': eval_metrics,
+            'should_save': self._should_save_model(current_metric, eval_metrics),
             'should_stop': False
         }
 
@@ -282,7 +303,7 @@ class Trainer:
         """开始训练 - 使用验证指标选择最佳模型"""
         self.train_loader = self.config['train_loader']
         self.val_loader = self.config['val_loader']
-        self.trainning = True
+        self.training = True
 
         for epoch in range(self.current_epoch, self.config['epochs'] + 1):
             self.current_epoch = epoch
@@ -294,21 +315,21 @@ class Trainer:
             train_loss = self._train_epoch()
 
             # 验证阶段
-            val_metrics = self._validate()
-            val_metrics['train_loss'] = train_loss  # 也记录训练损失
+            eval_metrics = self._validate()
+            eval_metrics['train_loss'] = train_loss  # 也记录训练损失
 
             # 更新学习率
-            self._update_learning_rate(val_metrics)
+            self._update_learning_rate(eval_metrics)
 
             # 记录epoch总耗时
             epoch_use_time = time.time() - epoch_start_time
             self._log('log_time', f"Epoch {epoch} 总耗时: {epoch_use_time:.2f}s")
 
             # 评估训练进度并执行相应操作
-            progress = self._evaluate_training_progress(epoch, train_loss, val_metrics)
+            progress = self._evaluate_training_progress(epoch, train_loss, eval_metrics)
 
             if progress['should_save']:
-                self._save_best_model(epoch, progress['current_metric'], val_metrics)
+                self._save_best_model(epoch, progress['current_metric'], eval_metrics)
 
             if progress['should_stop']:
                 break
@@ -317,7 +338,7 @@ class Trainer:
             if epoch % 10 == 0:
                 self.save()
 
-            if not self.trainning:
+            if not self.training:
                 break
 
         self._log('log_time', "训练完成!")
@@ -331,5 +352,5 @@ class Trainer:
 
     def stop(self, arg):
         self.save()
-        self.trainning = False
+        self.training = False
         print("训练停止")

@@ -85,7 +85,7 @@ if __name__ == '__main__':
         'monitor_mode': 'max',       # cl_dice越大越好
 
         # 日志记录器
-        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=10)],
+        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=2)],
 
         # 其他配置
         'model_dir': model_dir,
