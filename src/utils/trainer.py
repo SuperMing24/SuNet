@@ -265,15 +265,14 @@ class Trainer:
             return True
         return False
 
-    def _update_learning_rate(self, eval_metrics: Dict[str, float]):
+    def _update_learning_rate(self,  val_loss: float):
         """更新学习率 - 使用验证损失"""
-        val_loss = eval_metrics.get('val_loss')
         if not math.isnan(val_loss) and val_loss != float('inf'):
             self.scheduler.step(val_loss)
 
             # 记录学习率变化（可选）
             current_lr = self.optimizer.param_groups[0]['lr']
-            self._log('log_time', f"📉 学习率更新为: {current_lr:.2e}")
+            self._log('log_time', f"📉 学习率现为: {current_lr:.2e}")
 
     def _evaluate_training_progress(self, epoch: int, eval_metrics: Dict[str, float]) -> Dict[str, Any]:
         """评估训练进度 - 只收集状态信息，不执行操作"""
@@ -301,7 +300,7 @@ class Trainer:
             self._update_learning_rate(val_loss)
 
         # 2. 保存最佳模型
-        if progress['should_save']:
+        if progress['should_save_model']:
             self.best_metric = progress['current_metric']
             self._save_better_model(
                 progress['epoch'],
@@ -332,13 +331,10 @@ class Trainer:
             epoch_start_time = time.time()
 
             # 训练阶段
-            train_loss = self._train_epoch()
+            # train_loss = self._train_epoch()
 
             # 验证阶段
             eval_metrics = self._validate()
-
-            # 更新学习率
-            self._update_learning_rate(eval_metrics)
 
             # 评估训练进度
             progress = self._evaluate_training_progress(epoch, eval_metrics)

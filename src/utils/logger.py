@@ -58,7 +58,7 @@ class SegLogger(BaseLogger):
         full_message = f"{timestamp} {message}"
 
         # 写入文件
-        with open(self.log_file, 'a') as f:
+        with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(f"{full_message}\n")
 
         # 输出到控制台
