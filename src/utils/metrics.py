@@ -39,7 +39,7 @@ class CLDiceScore(BaseMetric):
 
     @property
     def name(self) -> str:
-        return "cldice"
+        return "cl_dice"
 
     def compute(self, output: torch.Tensor, target: torch.Tensor) -> float:
         pred = (torch.sigmoid(output) > 0.5).float().cpu().numpy()

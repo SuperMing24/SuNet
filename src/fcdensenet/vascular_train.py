@@ -64,7 +64,7 @@ if __name__ == '__main__':
     val_loader = get_data_iter(data_dir + '/val', tf, train_size=None, batch_size=batch_size, dataset_class=Cat25Dataset)
 
 
-    # 配置训练
+    # 配置参数
     config = {
         'model': model,
         'epochs': 500,
@@ -75,21 +75,28 @@ if __name__ == '__main__':
         'train_loader': train_loader,
         'val_loader': val_loader,
 
+        # 日志记录器
+        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=2)],
+
         # 损失函数 - 血管分割专用
+        'loss_id': 'cl_dice',
         'loss_fn': LOSS_REGISTRY['cl_dice'],
         # 评估指标 - 简洁配置
         'metric_evaluator': create_metrics(['dice', 'cl_dice', 'hausdorff']),
 
-        # 监控配置
-        'monitor_metric': 'cl_dice',  # 主要看中心线匹配度
-        'monitor_mode': 'max',       # cl_dice越大越好
-
-        # 日志记录器
-        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=2)],
+        # 训练动作配置
+        'training_actions': {
+            'update_lr_every_epoch': True,
+            'update_lr_based_on': 'val_loss',  # 或 'cl_dice'
+            'save_checkpoint_interval': 5,
+            'should_save_checkpoint': True,
+            'enable_early_stop': True,
+            'enable_quality_checks': True  # 只有质量合格的改进才保存
+        },
 
         # 其他配置
         'model_dir': model_dir,
-        'checkpoint': 'best_model.pth'  # 可选：恢复训练
+        'checkpoint': 'best_model.pth',  # 可选：恢复训练
     }
 
     trainer = trainer.Trainer(config)
