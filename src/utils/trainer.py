@@ -76,8 +76,6 @@ class TrainingResultManager:
                     'learning_rate', 'epoch_duration', 'gradient_norm',
                     # 评估指标
                     'dice', 'cl_dice', 'hausdorff', 'accuracy',
-                    # 模型状态
-                    'best_metric', 'checkpoint_saved'
                 ]
                 writer.writerow(headers)
 
@@ -109,8 +107,7 @@ class TrainingResultManager:
                 data.get('eval_metrics', {}).get('hausdorff', ''),
                 data.get('eval_metrics', {}).get('accuracy', ''),
                 # 模型状态
-                data.get('best_metric', ''),
-                data.get('checkpoint_saved', '')
+                data.get('best_metric', '')
             ]
             writer.writerow(row)
 
@@ -366,7 +363,7 @@ class Trainer:
 
     def _save_epoch_results(self, train_loss: float,
                         loss_metrics: Dict[str, float], eval_metrics: Dict[str, float],
-                        epoch_duration: float, checkpoint_saved: bool = False):
+                        epoch_duration: float):
         """保存epoch训练结果 - 结构化数据"""
         epoch_data = {
             'epoch': self.current_epoch,
@@ -378,7 +375,6 @@ class Trainer:
             'gradient_norm': self._compute_gradient_norm(),
             'eval_metrics': eval_metrics,
             'best_metric': self.best_metric,
-            'checkpoint_saved': checkpoint_saved
         }
 
         # 使用结果管理器保存
@@ -399,7 +395,6 @@ class Trainer:
             'val_loss': loss_metrics.get('val_loss'),
             'should_update_lr': self.training_actions.get('update_lr_every_epoch', True),
             'should_save_model': self._should_save_model(eval_metrics),
-            'should_save_checkpoint': self.training_actions.get('should_save_checkpoint', True),
         }
 
         # 检查早停
@@ -425,14 +420,12 @@ class Trainer:
             )
             self.early_stop_counter = 0
 
-        # 3. 保存定期检查点（结果分析策略）
-        checkpoint_saved = False
-        if progress_info['should_save_checkpoint']:
+        # 3. 保存定期结果档案（结果分析策略）
+        if self.training_actions.get('should_save_checkpoint', True):
             # 定期保存检查点
             if progress_info['epoch'] % self.training_actions.get('save_checkpoint_interval') == 0:
-                checkpoint_saved = True
-                # 保存训练结果数据（无论是否保存检查点都记录）
-                self._save_epoch_results(train_loss, validation_results, epoch_duration, checkpoint_saved)
+                # 保存训练结果数据
+                self._save_epoch_results(train_loss, validation_results, epoch_duration)
 
         # 4. 处理早停
         if progress_info.get('should_early_stop', False):
