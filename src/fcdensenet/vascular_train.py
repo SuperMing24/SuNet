@@ -100,6 +100,5 @@ if __name__ == '__main__':
     }
 
     trainer = trainer.Trainer(config)
-    # command.CmdProcessor(trainer).start_async()
     command.CommandServer(trainer).start()
     trainer.start_train()

@@ -107,23 +107,23 @@ class SegLogger(BaseLogger):
 
     def log_images(self, epoch: int, data, output, target, prefix: str, **kwargs):
         """记录图像 - 独立的业务逻辑"""
-        # try:
-        #     for j in range(min(2, data.shape[0])):  # 保存前2个样本
-        #         plot_results(
-        #             data[j], target[j], output[j],
-        #             f'{self.image_dir}/{prefix}_epoch_{epoch}_sample_{j}.png'
-        #         )
-        #         # 基础消息
-        #         msg = f"保存可视化结果: {prefix}_epoch_{epoch}_sample_{j}.png"
-        #
-        #         # 如果有额外参数，自动添加
-        #         if kwargs:
-        #             extra_info = " | ".join([f"{k}: {v}" for k, v in kwargs.items()])
-        #             msg += f" | {extra_info}"
-        #
-        #         self._log_message(msg)
-        # except Exception as e:
-        #     self._log_message(f"可视化保存失败: {e}")
+        try:
+            for j in range(min(2, data.shape[0])):  # 保存前2个样本
+                plot_results(
+                    data[j], target[j], output[j],
+                    f'{self.image_dir}/{prefix}_epoch_{epoch}_sample_{j}.png'
+                )
+                # 基础消息
+                msg = f"保存可视化结果: {prefix}_epoch_{epoch}_sample_{j}.png"
+
+                # 如果有额外参数，自动添加
+                if kwargs:
+                    extra_info = " | ".join([f"{k}: {v}" for k, v in kwargs.items()])
+                    msg += f" | {extra_info}"
+
+                self._log_message(msg)
+        except Exception as e:
+            self._log_message(f"可视化保存失败: {e}")
 
 
 

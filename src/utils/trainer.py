@@ -2,7 +2,10 @@
 import os
 import time
 import math
-from typing import Dict, Any, Optional
+import json
+import csv
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 
 import torch
 import torch.optim as optim
@@ -48,6 +51,87 @@ class ModelManager:
             print(f"加载检查点失败: {e}")
             return None
 
+class TrainingResultManager:
+    """训练结果管理器 - 专注结构化数据保存"""
+
+    def __init__(self, save_dir: str = "results"):
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+
+        # CSV文件路径
+        self.csv_file = os.path.join(save_dir, "training_results.csv")
+        self._init_csv_file()
+
+        # JSON备份文件路径
+        self.json_file = os.path.join(save_dir, "training_results.json")
+
+    def _init_csv_file(self):
+        """初始化CSV文件表头"""
+        if not os.path.exists(self.csv_file):
+            with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                # 定义表头
+                headers = [
+                    'epoch', 'timestamp', 'train_loss', 'val_loss',
+                    'learning_rate', 'epoch_duration', 'gradient_norm',
+                    # 评估指标
+                    'dice', 'cl_dice', 'hausdorff', 'accuracy',
+                    # 模型状态
+                    'best_metric', 'checkpoint_saved'
+                ]
+                writer.writerow(headers)
+
+    def save_epoch_result(self, epoch_data: Dict[str, Any]):
+        """保存epoch训练结果到CSV和JSON"""
+        # 保存到CSV
+        self._save_to_csv(epoch_data)
+
+        # 保存到JSON（追加模式）
+        self._save_to_json(epoch_data)
+
+    def _save_to_csv(self, data: Dict[str, Any]):
+        """保存到CSV文件"""
+        with open(self.csv_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+
+            # 按表头顺序提取数据
+            row = [
+                data.get('epoch', ''),
+                data.get('timestamp', ''),
+                data.get('train_loss', ''),
+                data.get('val_loss', ''),
+                data.get('learning_rate', ''),
+                data.get('epoch_duration', ''),
+                data.get('gradient_norm', ''),
+                # 评估指标
+                data.get('eval_metrics', {}).get('dice', ''),
+                data.get('eval_metrics', {}).get('cl_dice', ''),
+                data.get('eval_metrics', {}).get('hausdorff', ''),
+                data.get('eval_metrics', {}).get('accuracy', ''),
+                # 模型状态
+                data.get('best_metric', ''),
+                data.get('checkpoint_saved', '')
+            ]
+            writer.writerow(row)
+
+    def _save_to_json(self, data: Dict[str, Any]):
+        """保存到JSON文件（追加模式）"""
+        # 读取现有数据
+        all_data = []
+        if os.path.exists(self.json_file):
+            try:
+                with open(self.json_file, 'r', encoding='utf-8') as f:
+                    all_data = json.load(f)
+            except (json.JSONDecodeError, Exception):
+                all_data = []
+
+        # 添加新数据
+        all_data.append(data)
+
+        # 写回文件
+        with open(self.json_file, 'w', encoding='utf-8') as f:
+            json.dump(all_data, f, indent=2, ensure_ascii=False)
+
 class Trainer:
     prompt = '(trainer) '
 
@@ -74,10 +158,14 @@ class Trainer:
         self.loggers = config.get('loggers')
         self.model_manager = ModelManager(config.get('model_dir'))
 
+        # 训练结果管理器
+        self.result_manager = TrainingResultManager(config.get('model_dir'))
+
         # 训练状态
         self.current_epoch = 1
         self.train_loader = None
         self.val_loader = None
+        self.train_losses = []  # 记录每个epoch的训练损失
 
         self.training_actions = config.get('training_actions')
 
@@ -120,7 +208,7 @@ class Trainer:
             print(f"从epoch {state['epoch']}恢复训练")
 
     def _train_epoch(self) -> float:
-        """训练阶段 - 使用灵活的kwargs参数"""
+        """训练阶段 - 使用kwargs参数"""
         self.model.train()
         total_loss = 0.0
 
@@ -150,9 +238,12 @@ class Trainer:
                     评估=f"{self.best_metric}")
             if not self.training:
                 break
-        return total_loss / len(self.train_loader)
 
-    def _validate(self) -> Dict[str, float]:
+        # 返回整个epoch的平均训练损失
+        avg_train_loss = total_loss / len(self.train_loader)
+        return avg_train_loss
+
+    def _validate(self) -> Dict[str, Any]:
         """验证阶段 - 计算所有评估指标"""
         self.model.eval()
         all_outputs = []
@@ -180,13 +271,13 @@ class Trainer:
         # 计算平均验证损失
         avg_val_loss = total_val_loss / len(self.val_loader)
 
-        # 合并计算评估指标
-        combined_output = torch.cat(all_outputs, dim=0)
-        combined_target = torch.cat(all_targets, dim=0)
-
+        # 合并计算评估指标，不包含损失值
         eval_metrics = {}
         if self.metric_evaluator:
+            combined_output = torch.cat(all_outputs, dim=0)
+            combined_target = torch.cat(all_targets, dim=0)
             eval_metrics = self.metric_evaluator.evaluate(combined_output, combined_target)
+
             # 记录评估指标
             self._log('log_metrics', self.current_epoch, eval_metrics,
                     验证样本数=f"{combined_output.size(0)}",
@@ -194,8 +285,7 @@ class Trainer:
                     学习率=f"{self.optimizer.param_groups[0]['lr']:.2e}")
 
         # 返回验证损失和所有指标
-        eval_metrics['val_loss'] = avg_val_loss
-        return eval_metrics
+        return avg_val_loss, eval_metrics
 
     def _compute_gradient_norm(self) -> float:
         """计算梯度L2范数"""
@@ -206,19 +296,19 @@ class Trainer:
                 total_norm += param_norm.item() ** 2
         return total_norm ** 0.5
 
-    def _should_save_model(self, eval_metrics: Dict[str, float]) -> bool:
+    def _should_save_model(self, loss_metrics: Dict[str, float], eval_metrics: Dict[str, float]) -> bool:
         """判断是否应该保存模型"""
 
         # 1. 首先检查是否有改进
-        if not self._is_improvement(eval_metrics):
+        if not self._is_improvement(loss_metrics['val_loss']):
             return False
 
         # 2. 如果启用了质量检查，返回质量检查结果；否则直接返回True
         return self._check_quality_issue(eval_metrics) if self.enable_quality_checks else True
 
-    def _is_improvement(self, eval_metrics: Dict[str, float]) -> bool:
-        """有改进的标准：暂时就设定为验证阶段损失值更小"""
-        return eval_metrics['val_loss'] < self.best_metric
+    def _is_improvement(self, loss_metrics: Dict[str, float]) -> bool:
+        """有改进的标准：验证阶段损失值更小"""
+        return loss_metrics['val_loss'] < self.best_metric
 
     def _check_quality_issue(self, eval_metrics: Dict[str, float]) -> bool:
         """质量检查 - 严格的多指标检查"""
@@ -241,9 +331,9 @@ class Trainer:
 
         return True
 
-    def _save_better_model(self, epoch: int, val_loss_metric):
-        """保存最佳模型 - 统一的最佳模型保存逻辑"""
-        self.best_metric = val_loss_metric
+    def _save_better_model(self, epoch: int, loss_metrics: Dict[str, float]):
+        """保存最佳模型 - 只关注模型优化"""
+        self.best_metric = loss_metrics['val_loss']
 
         # 保存模型
         self.model_manager.save(
@@ -254,7 +344,7 @@ class Trainer:
 
         # 记录保存信息
         metric_info = f"{self.loss_id} | val_loss: {self.best_metric:.4f}"
-
+        # 考虑是否要再加train_loss？？
         self._log('log_time', f"💾 保存最佳模型 ({metric_info})")
 
     def _check_early_stop(self) -> bool:
@@ -265,7 +355,7 @@ class Trainer:
             return True
         return False
 
-    def _update_learning_rate(self,  val_loss: float):
+    def _update_learning_rate(self, val_loss: float):
         """更新学习率 - 使用验证损失"""
         if not math.isnan(val_loss) and val_loss != float('inf'):
             self.scheduler.step(val_loss)
@@ -274,13 +364,39 @@ class Trainer:
             current_lr = self.optimizer.param_groups[0]['lr']
             self._log('log_time', f"📉 学习率现为: {current_lr:.2e}")
 
-    def _evaluate_training_progress(self, epoch: int, eval_metrics: Dict[str, float]) -> Dict[str, Any]:
+    def _save_epoch_results(self, train_loss: float,
+                        loss_metrics: Dict[str, float], eval_metrics: Dict[str, float],
+                        epoch_duration: float, checkpoint_saved: bool = False):
+        """保存epoch训练结果 - 结构化数据"""
+        epoch_data = {
+            'epoch': self.current_epoch,
+            'timestamp': datetime.now().isoformat(),
+            'train_loss': loss_metrics['train_loss'],
+            'val_loss': loss_metrics['val_loss'],
+            'learning_rate': self.optimizer.param_groups[0]['lr'],
+            'epoch_duration': epoch_duration,
+            'gradient_norm': self._compute_gradient_norm(),
+            'eval_metrics': eval_metrics,
+            'best_metric': self.best_metric,
+            'checkpoint_saved': checkpoint_saved
+        }
+
+        # 使用结果管理器保存
+        self.result_manager.save_epoch_result(epoch_data)
+
+        # 同时记录到日志
+        self._log('log_time',
+                 f"📊 Epoch {self.current_epoch} 结果已保存 | "
+                 f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | ")
+
+    def _evaluate_training_progress(self, epoch: int,
+            loss_metrics: Dict[str, float], eval_metrics: Dict[str, float]) -> Dict[str, Any]:
         """评估训练进度 - 只收集状态信息，不执行操作"""
-        val_loss = eval_metrics.get('val_loss')
 
         progress_info = {
             'epoch': epoch,
-            'val_loss': val_loss,
+            'train_loss': loss_metrics.get('train_loss'),
+            'val_loss': loss_metrics.get('val_loss'),
             'should_update_lr': self.training_actions.get('update_lr_every_epoch', True),
             'should_save_model': self._should_save_model(eval_metrics),
             'should_save_checkpoint': self.training_actions.get('should_save_checkpoint', True),
@@ -292,30 +408,34 @@ class Trainer:
 
         return progress_info
 
-    def _execute_training_actions(self, progress: Dict[str, Any]):
+    def _execute_training_actions(self, progress_info: Dict[str, Any],
+                loss_metrics: Dict[str, float], eval_metrics: Dict[str, float], epoch_duration: float):
         """配置驱动的训练动作执行"""
+        val_loss = progress_info['val_loss']
+
         # 1. 更新学习率
-        val_loss = progress['val_loss']
-        if progress['should_update_lr']:
+        if progress_info['should_update_lr']:
             self._update_learning_rate(val_loss)
 
-        # 2. 保存最佳模型
-        if progress['should_save_model']:
-            self.best_metric = progress['current_metric']
+        # 2. 保存最佳模型（模型优化策略）
+        if progress_info['should_save_model']:
             self._save_better_model(
-                progress['epoch'],
-                progress['val_loss']
+                progress_info['epoch'],
+                progress_info['val_loss']
             )
             self.early_stop_counter = 0
 
-        # 3. 保存定期检查点
-        if progress['should_save_checkpoint']:
+        # 3. 保存定期检查点（结果分析策略）
+        checkpoint_saved = False
+        if progress_info['should_save_checkpoint']:
             # 定期保存检查点
-            if progress['epoch'] % self.training_actions.get('save_checkpoint_interval') == 0:
-                self.save()
+            if progress_info['epoch'] % self.training_actions.get('save_checkpoint_interval') == 0:
+                checkpoint_saved = True
+                # 保存训练结果数据（无论是否保存检查点都记录）
+                self._save_epoch_results(train_loss, validation_results, epoch_duration, checkpoint_saved)
 
         # 4. 处理早停
-        if progress['should_early_stop']:
+        if progress_info.get('should_early_stop', False):
             self._log('log_time', f"🛑 早停触发，连续{self.patience}个epoch未改善")
 
     def start_train(self):
@@ -324,6 +444,10 @@ class Trainer:
         self.val_loader = self.config['val_loader']
         self.training = True
 
+        # 记录训练开始时间
+        total_start_time = time.time()
+        self._log('log_time', "🚀 训练开始!", 总epoch数=f"{self.config['epochs']}")
+
         for epoch in range(self.current_epoch, self.config['epochs'] + 1):
             self.current_epoch = epoch
 
@@ -331,36 +455,62 @@ class Trainer:
             epoch_start_time = time.time()
 
             # 训练阶段
-            # train_loss = self._train_epoch()
+            # loss_metrics['train_loss'] = self._train_epoch()
 
             # 验证阶段
-            eval_metrics = self._validate()
+            loss_metrics['val_loss'], eval_metrics = self._validate()
 
             # 评估训练进度
-            progress = self._evaluate_training_progress(epoch, eval_metrics)
+            progress_info = self._evaluate_training_progress(epoch, eval_metrics)
             # 并执行相应操作
-            self._execute_training_actions(progress)
+            self._execute_training_actions(progress_info)
 
             # 记录epoch总耗时
-            epoch_use_time = time.time() - epoch_start_time
-            self._log('log_time', f"Epoch {epoch} 总耗时: {epoch_use_time:.2f}s")
+            epoch_duration = time.time() - epoch_start_time
+            self._log('log_time', f"Epoch {epoch} 总耗时: {epoch_duration:.2f}s")
 
-            if progress['should_early_stop']:
+            if progress.get('should_early_stop', False):
                 break
 
             if not self.training:
                 break
 
-        self._log('log_time', "训练完成!")
+        # 记录训练总耗时
+        total_time = time.time() - total_start_time
+        self._log('log_time', f"训练完成! 总耗时: {total_time:.2f}s")
+
+        # 保存最终模型和结果
+        self._save_final_results(total_time)
+
+    def _save_final_results(self, total_time: float):
+        """保存最终训练结果"""
+        final_data = {
+            'final_epoch': self.current_epoch,
+            'total_training_time': total_time,
+            'best_metric': self.best_metric,
+            'final_train_loss': self.train_losses[-1] if self.train_losses else 0.0,
+            'training_completed': True,
+            'completion_time': datetime.now().isoformat()
+        }
+
+        # 保存到JSON
+        final_file = os.path.join(self.config['model_dir'], "final_training_summary.json")
+        with open(final_file, 'w', encoding='utf-8') as f:
+            json.dump(final_data, f, indent=2, ensure_ascii=False)
+
+        self._log('log_time', f"📄 最终训练摘要已保存: {final_file}")
 
     def save(self):
+        """保存检查点 - 结果分析策略"""
         filename = f'checkpoint_epoch_{self.current_epoch}.pth'
         self.model_manager.save(self.model, self.optimizer, self.current_epoch, filename)
         msg = f'save model to {filename}'
         print(msg)
+        self._log('log_time', f"💾 检查点已保存: {filename}")
         return msg
 
     def stop(self, arg):
+        """停止训练并保存当前状态"""
         self.save()
         self.training = False
-        print("训练停止")
+        self._log('log_time', "训练停止")
