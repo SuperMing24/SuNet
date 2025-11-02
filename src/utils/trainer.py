@@ -297,7 +297,7 @@ class Trainer:
         """判断是否应该保存模型"""
 
         # 1. 首先检查是否有改进
-        if not self._is_improvement(loss_metrics['val_loss']):
+        if not self._is_improvement(loss_metrics):
             return False
 
         # 2. 如果启用了质量检查，返回质量检查结果；否则直接返回True
@@ -305,7 +305,8 @@ class Trainer:
 
     def _is_improvement(self, loss_metrics: Dict[str, float]) -> bool:
         """有改进的标准：验证阶段损失值更小"""
-        return loss_metrics['val_loss'] < self.best_metric
+        val_loss = loss_metrics['val_loss']
+        return val_loss < self.best_metric
 
     def _check_quality_issue(self, eval_metrics: Dict[str, float]) -> bool:
         """质量检查 - 严格的多指标检查"""
@@ -361,8 +362,7 @@ class Trainer:
             current_lr = self.optimizer.param_groups[0]['lr']
             self._log('log_time', f"📉 学习率现为: {current_lr:.2e}")
 
-    def _save_epoch_results(self, train_loss: float,
-                        loss_metrics: Dict[str, float], eval_metrics: Dict[str, float],
+    def _save_epoch_results(self, loss_metrics: Dict[str, float], eval_metrics: Dict[str, float],
                         epoch_duration: float):
         """保存epoch训练结果 - 结构化数据"""
         epoch_data = {
@@ -383,7 +383,7 @@ class Trainer:
         # 同时记录到日志
         self._log('log_time',
                  f"📊 Epoch {self.current_epoch} 结果已保存 | "
-                 f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | ")
+                 f"Train: {loss_metrics['train_loss']:.4f} | Val: {loss_metrics['val_loss']:.4f} | ")
 
     def _evaluate_training_progress(self, epoch: int,
             loss_metrics: Dict[str, float], eval_metrics: Dict[str, float]) -> Dict[str, Any]:
@@ -391,10 +391,9 @@ class Trainer:
 
         progress_info = {
             'epoch': epoch,
-            'train_loss': loss_metrics.get('train_loss'),
-            'val_loss': loss_metrics.get('val_loss'),
             'should_update_lr': self.training_actions.get('update_lr_every_epoch', True),
-            'should_save_model': self._should_save_model(eval_metrics),
+            'should_save_model': self._should_save_model(loss_metrics, eval_metrics),
+            'should_early_stop': False,
         }
 
         # 检查早停
@@ -406,17 +405,16 @@ class Trainer:
     def _execute_training_actions(self, progress_info: Dict[str, Any],
                 loss_metrics: Dict[str, float], eval_metrics: Dict[str, float], epoch_duration: float):
         """配置驱动的训练动作执行"""
-        val_loss = progress_info['val_loss']
 
         # 1. 更新学习率
         if progress_info['should_update_lr']:
-            self._update_learning_rate(val_loss)
+            self._update_learning_rate(loss_metrics['val_loss'])
 
         # 2. 保存最佳模型（模型优化策略）
         if progress_info['should_save_model']:
             self._save_better_model(
                 progress_info['epoch'],
-                progress_info['val_loss']
+                loss_metrics['val_loss']
             )
             self.early_stop_counter = 0
 
@@ -425,7 +423,7 @@ class Trainer:
             # 定期保存检查点
             if progress_info['epoch'] % self.training_actions.get('save_checkpoint_interval') == 0:
                 # 保存训练结果数据
-                self._save_epoch_results(train_loss, validation_results, epoch_duration)
+                self._save_epoch_results(loss_metrics, eval_metrics, epoch_duration)
 
         # 4. 处理早停
         if progress_info.get('should_early_stop', False):
@@ -443,6 +441,7 @@ class Trainer:
 
         for epoch in range(self.current_epoch, self.config['epochs'] + 1):
             self.current_epoch = epoch
+            loss_metrics = {}
 
             # 记录epoch开始时间
             epoch_start_time = time.time()
@@ -451,18 +450,19 @@ class Trainer:
             # loss_metrics['train_loss'] = self._train_epoch()
 
             # 验证阶段
-            loss_metrics['val_loss'], eval_metrics = self._validate()
-
-            # 评估训练进度
-            progress_info = self._evaluate_training_progress(epoch, eval_metrics)
-            # 并执行相应操作
-            self._execute_training_actions(progress_info)
+            val_loss, eval_metrics = self._validate()
+            loss_metrics['val_loss'] = val_loss
 
             # 记录epoch总耗时
             epoch_duration = time.time() - epoch_start_time
             self._log('log_time', f"Epoch {epoch} 总耗时: {epoch_duration:.2f}s")
 
-            if progress.get('should_early_stop', False):
+            # 评估训练进度
+            progress_info = self._evaluate_training_progress(epoch, loss_metrics, eval_metrics)
+            # 并执行相应操作
+            self._execute_training_actions(progress_info, loss_metrics, eval_metrics, epoch_duration)
+
+            if progress_info.get('should_early_stop', False):
                 break
 
             if not self.training:
