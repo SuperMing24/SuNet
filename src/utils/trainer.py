@@ -414,7 +414,7 @@ class Trainer:
         if progress_info['should_save_model']:
             self._save_better_model(
                 progress_info['epoch'],
-                loss_metrics['val_loss']
+                loss_metrics
             )
             self.early_stop_counter = 0
 

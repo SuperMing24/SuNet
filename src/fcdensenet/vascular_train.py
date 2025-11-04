@@ -37,7 +37,7 @@ class MyHookCaller(ForwardHookCaller):
 
 if __name__ == '__main__':
     model = FCDenseNet(3, 48, [4, 5, 7, 10, 12, 15], growth_rate=16)
-    # model = FCDenseNet(3, 48, [2, 2, 2, 2, 2, 2], growth_rate=16)
+    # model_rafat = FCDenseNet(3, 48, [4, 5, 7, 9, 11, 13], growth_rate=18)
     X = torch.randn(1, 3, 256, 256)
 
     # forward_hook.show_model_structure(model, True)
@@ -82,7 +82,7 @@ if __name__ == '__main__':
         'loss_id': 'cl_dice',
         'loss_fn': LOSS_REGISTRY['cl_dice'],
         # 评估指标 - 简洁配置
-        'metric_evaluator': create_metrics(['dice', 'cl_dice', 'hausdorff']),
+        'metric_evaluator': create_metrics(['dice', 'cl_dice', 'hausdorff', 'accuracy']),
 
         # 训练动作配置
         'training_actions': {
