@@ -5,6 +5,28 @@ import torch.nn.functional as F
 from utils.putil import init_weights as init
 
 
+class SliceAttentionExpand(nn.Module):
+    def __init__(self, num_slices, rate=4):
+        super(SliceAttentionExpand, self).__init__()
+        self.num_slices = num_slices
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.global_max_pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(num_slices, num_slices * rate),
+            nn.ReLU(inplace=True),
+            nn.Linear(num_slices * rate, num_slices),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, h, w = x.size()
+        avg_pool = self.global_avg_pool(x).view(b, c)
+        max_pool = self.global_max_pool(x).view(b, c)
+        att = max_pool + avg_pool
+
+        weights = self.fc(att).view(b, c, 1, 1)
+        return x * weights
+
 class FirstConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(FirstConv, self).__init__()
@@ -109,6 +131,7 @@ class FCDenseNet(nn.Module):
         self.tds = nn.ModuleList()
         self.db_ups = nn.ModuleList()
         self.tus = nn.ModuleList()
+        self.first_slice_attention = SliceAttentionExpand(3, 2)
         self.fist_conv = FirstConv(in_channels=in_channels, out_channels=first_channels)
         current_channels = first_channels
 
@@ -121,6 +144,7 @@ class FCDenseNet(nn.Module):
             skip_channels.append(current_channels)
 
         skip_channels.reverse()
+        self.bottleneck_slice_attention = SliceAttentionExpand(current_channels, 2)
         self.bottleneck = DenseBlock(current_channels, num_layers[-1], growth_rate, dropout_rate)
 
         current_channels = num_layers[-1] * growth_rate
@@ -138,6 +162,7 @@ class FCDenseNet(nn.Module):
 
     def forward(self, X):
         skip_x = []
+        X = self.first_slice_attention(X)
         X = self.fist_conv(X)
 
         for i in range(len(self.db_downs)):
@@ -146,6 +171,7 @@ class FCDenseNet(nn.Module):
             X = self.tds[i](X)
 
         skip_x.reverse()
+        X = self.bottleneck_slice_attention(X)
         X = self.bottleneck(X)
         last_bd = self.bottleneck
         for i in range(len(self.db_ups)):

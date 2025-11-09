@@ -76,6 +76,8 @@ class TrainingResultManager:
                     'learning_rate', 'epoch_duration', 'gradient_norm',
                     # 评估指标
                     'dice', 'cl_dice', 'hausdorff', 'accuracy',
+                    # 模型指标
+                    'best_metric'
                 ]
                 writer.writerow(headers)
 
@@ -85,7 +87,7 @@ class TrainingResultManager:
         self._save_to_csv(epoch_data)
 
         # 保存到JSON（追加模式）
-        self._save_to_json(epoch_data)
+        # self._save_to_json(epoch_data)
 
     def _save_to_csv(self, data: Dict[str, Any]):
         """保存到CSV文件"""
@@ -447,7 +449,7 @@ class Trainer:
             epoch_start_time = time.time()
 
             # 训练阶段
-            # loss_metrics['train_loss'] = self._train_epoch()
+            loss_metrics['train_loss'] = self._train_epoch()
 
             # 验证阶段
             val_loss, eval_metrics = self._validate()

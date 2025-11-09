@@ -12,7 +12,7 @@ from fc_dn_tools import Cat25Dataset
 from fcdensenet.fc_dn_model import FCDenseNet
 from utils import command
 from utils import trainer
-from utils.segutil import get_data_iter
+from utils.segutil import get_dataset, get_dataloader
 from utils.forward_hook import ForwardHookCaller, ModuleNode, Tuple, Any
 
 from utils.losses import LOSS_REGISTRY
@@ -36,10 +36,11 @@ class MyHookCaller(ForwardHookCaller):
 
 
 if __name__ == '__main__':
-    model = FCDenseNet(3, 48, [4, 5, 7, 10, 12, 15], growth_rate=16)
-    # model_rafat = FCDenseNet(3, 48, [4, 5, 7, 9, 11, 13], growth_rate=18)
-    X = torch.randn(1, 3, 256, 256)
+    model_rafat = FCDenseNet(3, 48, [4, 5, 7, 9, 11, 13], growth_rate=18)
+    # model_check = FCDenseNet(3, 48, [4, 5, 7, 10, 12, 15], growth_rate=16)
+    # model_rafat_cat_attention = FCDenseNet(3, 48, [4, 5, 7, 9, 11, 13], growth_rate=18)
 
+    # X = torch.randn(1, 3, 256, 256)
     # forward_hook.show_model_structure(model, True)
     # with forward_hook.Forward_Hook(model, MyHookCaller()):
     #     model(X)
@@ -54,29 +55,28 @@ if __name__ == '__main__':
     log_dir = os.path.join(base_dir, 'work/fcdnet')
 
     # tf = [transforms.ToTensor(), (transforms.RandomCrop(size=256), True)]
-    tf = [transforms.ToTensor()]
+    tf = [(transforms.Resize(256), True), transforms.ToTensor()]
     batch_size = 1
 
-    # train_itr, val_itr = get_data_iter(data_dir + '/train', tf, train_size=0.8, batch_size=batch_size,
-    #                                    dataset_class=Cat25Dataset)
-    train_loader = get_data_iter(data_dir + '/train', tf, train_size=None, batch_size=batch_size,
-                              dataset_class=Cat25Dataset)
-    val_loader = get_data_iter(data_dir + '/val', tf, train_size=None, batch_size=batch_size, dataset_class=Cat25Dataset)
+    train_dataset = get_dataset(data_dir + '/train', tf, dataset_class=Cat25Dataset)
+    val_dataset = get_dataset(data_dir + '/val', tf, dataset_class=Cat25Dataset)
+    train_dataloader = get_dataloader(train_dataset, batch_size, shuffle=True, num_workers=0)
+    val_dataloader = get_dataloader(val_dataset, batch_size, shuffle=True, num_workers=0)
 
 
     # 配置参数
     config = {
-        'model': model,
+        'model': model_rafat,
         'epochs': 500,
-        'lr': 1e-4,
+        'lr': 1e-3,
         'device': torch.device('cuda:0'),
 
         # 数据
-        'train_loader': train_loader,
-        'val_loader': val_loader,
+        'train_loader': train_dataloader,
+        'val_loader': val_dataloader,
 
         # 日志记录器
-        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=2)],
+        'loggers': [SegLogger(log_dir, total_epochs=500, log_interval=5)],
 
         # 损失函数 - 血管分割专用
         'loss_id': 'cl_dice',
@@ -88,7 +88,7 @@ if __name__ == '__main__':
         'training_actions': {
             'update_lr_every_epoch': True,
             'update_lr_based_on': 'val_loss',  # 或 'cl_dice'
-            'save_checkpoint_interval': 5,
+            'save_checkpoint_interval': 1,
             'should_save_checkpoint': True,
             'enable_early_stop': True,
             'enable_quality_checks': True  # 只有质量合格的改进才保存
