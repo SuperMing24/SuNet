@@ -19,7 +19,7 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_loss(self, phase: str, epoch: int, batch_idx: int, loss: float, **kwargs):
+    def log_loss(self, phase: str, epoch: int, batch_idx: int, batch_total: int, loss: float, **kwargs):
         """记录损失信息"""
         pass
 
@@ -72,12 +72,12 @@ class SegLogger(BaseLogger):
             message = f"{message} | {extra_info}"
         self._log_message(message)
 
-    def log_loss(self, phase: str, epoch: int, batch_idx: int, loss: float, **kwargs):
+    def log_loss(self, phase: str, epoch: int, batch_idx: int, batch_total: int, loss: float, **kwargs):
         """记录损失信息"""
-        if phase == 'train' and batch_idx % self.log_interval == 0:
+        if (phase == 'train' or phase == 'val') and batch_idx % self.log_interval == 0:
             # 基础消息
             msg = (f"Epoch {epoch}/{self.total_epochs} | "
-                   f"batch: {batch_idx} | {phase} Loss: {loss:.4f}")
+                   f"batch: {batch_idx}/{batch_total} | {phase} Loss: {loss:.4f}")
 
             # 如果有额外参数，自动添加
             if kwargs:
@@ -85,18 +85,18 @@ class SegLogger(BaseLogger):
                 msg += f" | {extra_info}"
 
             self._log_message(msg)
+        elif phase != 'train' and phase != 'val':
+            msg = f'Not Train or Val！'
+            self._log_message(msg)
 
     def log_metrics(self, epoch: int, metrics: Dict[str, float], **kwargs):
-        """记录评估指标 - 独立的业务逻辑"""
+        """记录评估指标"""
         # 构建指标字符串
         metrics_str = " | ".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
 
-        # 获取训练损失（如果有）
-        train_loss = metrics.get('train_loss', 0.0)
-
         # 基础消息
         msg = (f"Epoch {epoch}/{self.total_epochs} | "
-               f"Train Loss: {train_loss:.4f} | {metrics_str}")
+               f"{metrics_str}")
 
         # 如果有额外参数，自动添加
         if kwargs:

@@ -2,6 +2,7 @@ from typing import List, Tuple, Optional, Union
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import os
 
 class SegmentationVisualizer:
     """统一的分割结果可视化器"""
@@ -19,7 +20,7 @@ class SegmentationVisualizer:
         """获取默认颜色映射"""
         return [
             (255, 0, 0),    # 红色 - 类别0
-            (0, 255, 0),    # 绿色 - 类别1  
+            (0, 255, 0),    # 绿色 - 类别1
             (0, 0, 255),    # 蓝色 - 类别2
             (255, 255, 0),  # 黄色 - 类别3
             (255, 0, 255),  # 品红 - 类别4
@@ -45,14 +46,23 @@ class SegmentationVisualizer:
         """将类别掩码转换为彩色图像"""
         colored = np.zeros((*mask.shape, 3), dtype=np.uint8)
         for class_id, color in enumerate(self.class_colors):
-            colored[mask == class_id] = color
+            if class_id < len(self.class_colors):
+                colored[mask == class_id] = color
         return colored
     
     def _compute_error_map(self, true_mask: np.ndarray, pred_mask: np.ndarray, 
                           base_image: np.ndarray) -> np.ndarray:
         """计算误差图"""
+
+        # 确保基础图像是3通道
+        if base_image.ndim == 3 and base_image.shape[2] == 1:  # [H, W, 1] → [H, W, 3]
+            base_image = np.repeat(base_image, 3, axis=2)
+
         error_map = base_image.copy()
+
+        # 计算误差位置
         error_positions = true_mask != pred_mask
+
         error_map[error_positions] = [255, 0, 0]  # 错误区域标红
         return error_map
     

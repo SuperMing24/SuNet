@@ -4,11 +4,12 @@ import time
 import math
 import json
 import csv
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, Union
 from datetime import datetime
 
 import torch
 import torch.optim as optim
+from IPython.conftest import work_path
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 class ModelManager:
@@ -157,6 +158,11 @@ class Trainer:
         self.loggers = config.get('loggers')
         self.model_manager = ModelManager(config.get('model_dir'))
 
+        #可视化工具
+        self.visualizer = config.get('visualizer')
+        self.interval_visualize = config.get('interval_visualize')
+        self.image_dir = os.path.join(config.get('work_dir'), 'image')
+
         # 训练结果管理器
         self.result_manager = TrainingResultManager(config.get('model_dir'))
 
@@ -189,12 +195,12 @@ class Trainer:
                 try:
                     # 同时传递位置参数和关键字参数
                     log_method(*args, **kwargs)
-                except TypeError as e:
-                    # 如果参数不匹配，尝试只传递位置参数
+                except TypeError:
+                    # 参数不匹配，尝试简化调用
                     try:
-                        log_method(*args)
-                    except Exception as e2:
-                        print(f"日志记录错误 ({method_name}): {e2}")
+                        log_method(*args)  # 只传位置参数
+                    except Exception as e:
+                        print(f"日志记录错误 ({method_name}): {e}")
                 except Exception as e:
                     print(f"日志记录错误 ({method_name}): {e}")
 
@@ -229,12 +235,18 @@ class Trainer:
             use_time = time.time() - start_time
 
             # 增加kwargs传递信息
-            self._log('log_loss', 'train', self.current_epoch, batch_idx,
-                    loss.item(),
+            self._log('log_loss', 'train',
+                    self.current_epoch, batch_idx, len(self.train_loader),loss.item(),
                     耗时=f"{use_time:.2f}s",
                     梯度范数=f"{total_norm:.4f}",
                     设备=str(self.device),
-                    评估=f"{self.best_metric}")
+                    主要评估=f"{self.best_metric}")
+
+            # 可视化
+            if batch_idx % self.interval_visualize == 0:
+                self.visualizer.plot(data[0], target[0], output[0],
+                                     f'{self.image_dir}/epoch_{self.current_epoch}_batch_{batch_idx}.png', (8, 8))
+
             if not self.training:
                 break
 
@@ -242,7 +254,7 @@ class Trainer:
         avg_train_loss = total_loss / len(self.train_loader)
         return avg_train_loss
 
-    def _validate(self) -> Dict[str, Any]:
+    def _validate(self):
         """验证阶段 - 计算所有评估指标"""
         self.model.eval()
         all_outputs = []
@@ -262,8 +274,8 @@ class Trainer:
                 val_loss = self.loss_fn(output, target).item()
                 total_val_loss += val_loss
                 use_time = time.time() - start_time
-                self._log('log_loss', 'val', self.current_epoch, batch_idx,
-                        val_loss,
+                self._log('log_loss', 'val',
+                        self.current_epoch, batch_idx, len(self.val_loader), val_loss,
                         耗时=f"{use_time:.2f}s",
                         批次大小=f"{data.size(0)}")
 
@@ -279,9 +291,9 @@ class Trainer:
 
             # 记录评估指标
             self._log('log_metrics', self.current_epoch, eval_metrics,
-                    验证样本数=f"{combined_output.size(0)}",
-                    最佳指标=f"{self.best_metric:.4f}",
-                    学习率=f"{self.optimizer.param_groups[0]['lr']:.2e}")
+                    学习率=f"{self.optimizer.param_groups[0]['lr']:.2e}",
+                    验证样本总数=f"{combined_output.size(0)}",
+                    最佳指标=f"{self.best_metric:.4f}",)
 
         # 返回验证损失和所有指标
         return avg_val_loss, eval_metrics
@@ -504,7 +516,7 @@ class Trainer:
         self._log('log_time', f"💾 检查点已保存: {filename}")
         return msg
 
-    def stop(self, arg):
+    def stop(self):
         """停止训练并保存当前状态"""
         self.save()
         self.training = False

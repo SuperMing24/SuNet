@@ -126,6 +126,31 @@ class MetricEvaluator:
         return results
 
 
+class IoUScore(BaseMetric):
+    """IoU系数评估 - Jaccard相似系数"""
+
+    def __init__(self, threshold: float = 0.5, smooth: float = 1e-6):
+        self.threshold = threshold
+        self.smooth = smooth
+
+    @property
+    def name(self) -> str:
+        return "iou"
+
+    def compute(self, output: torch.Tensor, target: torch.Tensor) -> float:
+        pred = torch.sigmoid(output)
+        pred_binary = (pred > self.threshold).float()
+
+        B = pred_binary.shape[0]
+        pred_flat = pred_binary.view(B, -1)
+        target_flat = target.view(B, -1)
+
+        intersection = (pred_flat * target_flat).sum(dim=1)
+        union = pred_flat.sum(dim=1) + target_flat.sum(dim=1) - intersection
+
+        iou_per_sample = (intersection + self.smooth) / (union + self.smooth)
+        return iou_per_sample.mean().item()
+
 # 指标创建助手函数
 def create_metrics(metric_names: List[str]) -> MetricEvaluator:
     """创建指标评估器 - 简洁的配置方式"""
@@ -133,7 +158,8 @@ def create_metrics(metric_names: List[str]) -> MetricEvaluator:
         'dice': DiceScore,
         'cl_dice': CLDiceScore,
         'hausdorff': HausdorffDistance,
-        'accuracy': AccuracyScore
+        'accuracy': AccuracyScore,
+        'iou': IoUScore,
     }
 
     metrics = []

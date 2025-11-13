@@ -140,7 +140,7 @@ def tongbu_trans(transform, image, mask):
     return transformed_image, transformed_mask
 
 
-def get_dataset(data_dir="./data", transforms=[], dataset_class=None):
+def get_dataset(data_dir="./data", transforms=[], dataset_class=None, **kwargs):
     # 数据路径
     images_dir = os.path.join(data_dir, 'images')
     masks_dir = os.path.join(data_dir, 'masks')
@@ -149,7 +149,7 @@ def get_dataset(data_dir="./data", transforms=[], dataset_class=None):
         dataset_class = SegDataset
 
     # 创建数据集
-    dataset = dataset_class(images_dir, masks_dir, transforms)
+    dataset = dataset_class(images_dir, masks_dir, transforms, **kwargs)
     return dataset
 
 
