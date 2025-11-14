@@ -1,4 +1,6 @@
 from typing import List, Tuple, Optional, Union
+import matplotlib
+matplotlib.use('Agg')  # 在导入 pyplot 之前设置 Matplotlib 使用 Agg 后端
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
